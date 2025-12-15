@@ -1,13 +1,23 @@
 use std::io;
 use std::path::PathBuf;
 
+use rusqlite::{Connection, Result};
+
+pub const DATA_DIR_NAME: &str = ".tagfs";
+const DB_FILENAME: &str = "tagfs.db";
+const TABLES: &str = "
+        CREATE TABLE IF NOT EXISTS tracked_files (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            path          TEXT NOT NULL,
+            file_id       TEXT NOT NULL,  
+            last_modified INTEGER NOT NULL,
+            created_at    INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+        );
+    ";
+
 /// Ensures the hidden directory exists and returns its path.
-fn ensure_hidden_dir(dir_name: &str) -> io::Result<PathBuf> {
-    let hidden_name = if dir_name.starts_with('.') {
-        dir_name.to_string()
-    } else {
-        format!(".{}", dir_name)
-    };
+fn data_dir(dir_name: &str) -> io::Result<PathBuf> {
+    let hidden_name = dir_name.to_string();
 
     let mut path = std::env::current_dir()?;
     path.push(hidden_name);
@@ -18,9 +28,24 @@ fn ensure_hidden_dir(dir_name: &str) -> io::Result<PathBuf> {
 
     Ok(path)
 }
+fn initialize_database(data_dir: PathBuf, db_filename: &str) -> Result<Connection> {
+    let db_path = data_dir.join(db_filename);
 
-pub fn init() -> io::Result<PathBuf> {
-    ensure_hidden_dir(".tagfs")
+    let conn: Connection = Connection::open(&db_path)?;
+    //conn.execute("PRAGMA journal_mode=WAL;", [])?;
+    match conn.execute_batch(TABLES) {
+        Ok(_) => (),
+        Err(e) => {
+            return Err(e);
+        }
+    }
+    Ok(conn)
+}
+
+pub fn init() -> Result<Connection, Box<dyn std::error::Error>> {
+    let data_dir = data_dir(&DATA_DIR_NAME)?;
+    let conn = initialize_database(data_dir, DB_FILENAME)?;
+    Ok(conn)
 }
 
 #[cfg(test)]
@@ -34,7 +59,7 @@ mod tests {
 
         let _ = fs::remove_dir_all(test_dir_name);
 
-        let result_path = ensure_hidden_dir(test_dir_name).expect("Failed to create directory");
+        let result_path = data_dir(test_dir_name).expect("Failed to create directory");
 
         assert!(
             result_path.exists(),
@@ -56,10 +81,10 @@ mod tests {
 
         let _ = fs::remove_dir_all(test_dir_name);
 
-        let path1 = ensure_hidden_dir(test_dir_name).unwrap();
+        let path1 = data_dir(test_dir_name).unwrap();
         assert!(path1.exists());
 
-        let path2 = ensure_hidden_dir(test_dir_name).unwrap();
+        let path2 = data_dir(test_dir_name).unwrap();
         assert_eq!(path1, path2);
 
         fs::remove_dir_all(test_dir_name).unwrap();

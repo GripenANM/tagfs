@@ -1,4 +1,4 @@
 use tagfs_core;
 fn main() {
-    tagfs_core::init();
+    let _ = tagfs_core::init();
 }

@@ -1,4 +1,4 @@
 mod repo;
 pub fn init() {
-    repo::init().unwrap();
+    let _ = repo::init().unwrap();
 }

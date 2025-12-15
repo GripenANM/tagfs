@@ -5,3 +5,4 @@ edition = "2024"
 
 [dependencies]
 file-id = "0.2.3"
+rusqlite = { version = "0.37.0", features = ["bundled"] }
