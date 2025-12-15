@@ -1,0 +1,7 @@
+[package]
+name = "tagfs-core"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+file-id = "0.2.3"

@@ -1,6 +1,7 @@
-[package]
-name = "tagfs"
-version = "0.1.0"
-edition = "2024"
+[workspace]
+members = [
+    "core",
+    "cli",
+]
 
-[dependencies]
+resolver = "2"
