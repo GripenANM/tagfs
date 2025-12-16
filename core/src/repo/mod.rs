@@ -1,3 +1,5 @@
+mod tag;
+
 use crate::error::RepoError;
 use rusqlite::Connection;
 use std::io;
@@ -12,6 +14,18 @@ const TABLES: &str = "
         path TEXT NOT NULL,
         PRIMARY KEY (file_id, createTs)
     );
+    CREATE TABLE IF NOT EXISTS tags (
+        tag_id INTEGER PRIMARY KEY AUTOINCREMENT,  -- Unsigned integer surrogate
+        name TEXT UNIQUE NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS file_tags (
+        file_id TEXT NOT NULL,
+        createTs INTEGER NOT NULL,
+        tag_id INTEGER NOT NULL,
+        PRIMARY KEY (file_id, createTs, tag_id),
+        FOREIGN KEY (file_id, createTs) REFERENCES tracked_files(file_id, createTs) ON DELETE CASCADE,
+        FOREIGN KEY (tag_id) REFERENCES tags(tag_id) ON DELETE CASCADE
+);
     ";
 
 pub struct Repo {
@@ -20,7 +34,7 @@ pub struct Repo {
     conn: Connection,
 }
 impl Repo {
-    pub fn new() -> Result<Self, RepoError> {
+    pub fn open() -> Result<Self, RepoError> {
         let tagfs_dir = match Self::find_repo_root(None) {
             Ok(root) => root,
             Err(RepoError::RepoNotFound(path)) => path,
@@ -34,6 +48,7 @@ impl Repo {
             conn,
         })
     }
+    //helpers
     fn find_repo_root(start_path: Option<&Path>) -> Result<PathBuf, RepoError> {
         let start = match start_path {
             Some(p) => p.to_path_buf(),
@@ -74,12 +89,22 @@ impl Repo {
     fn open_or_create_db(data_dir: &PathBuf, db_filename: &str) -> rusqlite::Result<Connection> {
         let db_path = data_dir.join(db_filename);
 
-        let conn: Connection = Connection::open(&db_path)?;
-        conn.execute("PRAGMA foreign_keys = ON;", [])?;
-        conn.execute_batch(TABLES)?;
+        let mut conn: Connection = Connection::open(&db_path)?;
+        let tx = conn.transaction()?;
+        tx.execute("PRAGMA foreign_keys = ON;", [])?;
+        tx.execute_batch(TABLES)?;
+        tx.commit()?;
         Ok(conn)
     }
+    //tags - quick
+    pub fn new_tag(&mut self, tag_name: &str) -> rusqlite::Result<i64> {
+        crate::repo::tag::new_tag(&mut self.conn, tag_name)
+    }
+    pub fn update_tag(&mut self, new_name: &str, tag_name: &str) -> rusqlite::Result<Option<i64>> {
+        crate::repo::tag::update_tag(&mut self.conn, new_name, tag_name)
+    }
 
+    //accessors
     pub fn data_dir(&self) -> &PathBuf {
         &self.data_dir
     }
@@ -164,7 +189,7 @@ mod tests {
             fs::remove_dir_all(&tagfs_path).unwrap();
         }
 
-        let repo = Repo::new().unwrap();
+        let repo = Repo::open().unwrap();
 
         // Repo.path() should be the tmp dir (current dir)
         assert_eq!(repo.path(), &PathBuf::from(tmp.path()));
