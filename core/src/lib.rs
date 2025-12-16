@@ -1,4 +1,5 @@
-pub mod repo;
-pub fn init() {
-    let _ = repo::init().unwrap();
-}
+pub use error::RepoError;
+pub use repo::Repo;
+
+mod error;
+mod repo;

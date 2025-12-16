@@ -1,16 +1,7 @@
+use crate::error::RepoError;
+use rusqlite::Connection;
 use std::io;
-use std::path::PathBuf;
-use thiserror::Error;
-
-use rusqlite::{Connection, Result};
-
-#[derive(Error, Debug)]
-pub enum RepoInitError {
-    #[error("Unable to Create or Access Data Directory .tagfs/: {0}")]
-    Disconnect(#[from] io::Error),
-    #[error("Unable to initialize database: {0}")]
-    Redaction(#[from] rusqlite::Error),
-}
+use std::path::{Path, PathBuf};
 
 pub const DATA_DIR_NAME: &str = ".tagfs";
 const DB_FILENAME: &str = "tagfs.db";
@@ -23,51 +14,170 @@ const TABLES: &str = "
     );
     ";
 
-/// Ensures the hidden directory exists and returns its path.
-fn data_dir(dir_name: &str) -> io::Result<PathBuf> {
-    let dir_name = dir_name.to_string();
+pub struct Repo {
+    tagfs_dir: PathBuf,
+    data_dir: PathBuf,
+    conn: Connection,
+}
+impl Repo {
+    pub fn new() -> Result<Self, RepoError> {
+        let tagfs_dir = match Self::find_repo_root(None) {
+            Ok(root) => root,
+            Err(RepoError::RepoNotFound(path)) => path,
+            Err(err) => Err(err)?, // Propagate unexpected I/O errors
+        };
+        let data_dir = Self::data_dir_init(Some(&tagfs_dir))?;
+        let conn = Self::open_or_create_db(&data_dir, DB_FILENAME)?;
+        Ok(Repo {
+            tagfs_dir,
+            data_dir,
+            conn,
+        })
+    }
+    fn find_repo_root(start_path: Option<&Path>) -> Result<PathBuf, RepoError> {
+        let start = match start_path {
+            Some(p) => p.to_path_buf(),
+            None => std::env::current_dir()?,
+        };
 
-    let mut path = std::env::current_dir()?;
-    path.push(dir_name);
+        let mut current = start.as_path();
 
-    if !path.is_dir() {
-        std::fs::create_dir_all(&path)?;
+        loop {
+            let tagfs_path = current.join(DATA_DIR_NAME);
+
+            if tagfs_path.is_dir() {
+                return Ok(current.to_path_buf());
+            }
+
+            current = match current.parent() {
+                Some(parent) => parent,
+                None => return Err(RepoError::RepoNotFound(start)),
+            };
+        }
     }
 
-    Ok(path)
-}
-fn initialize_database(data_dir: PathBuf, db_filename: &str) -> Result<Connection> {
-    let db_path = data_dir.join(db_filename);
+    fn data_dir_init(repo_path: Option<&PathBuf>) -> io::Result<PathBuf> {
+        let mut path = match repo_path {
+            Some(p) => p.clone(),
+            None => std::env::current_dir()?,
+        };
 
-    let conn: Connection = Connection::open(&db_path)?;
-    conn.execute("PRAGMA foreign_keys = ON;", [])?;
-    conn.execute_batch(TABLES)?;
-    Ok(conn)
-}
+        path.push(DATA_DIR_NAME);
 
-pub fn init() -> Result<Connection, RepoInitError> {
-    let data_dir = data_dir(&DATA_DIR_NAME)?;
-    let conn = initialize_database(data_dir, DB_FILENAME)?;
-    Ok(conn)
+        if !path.is_dir() {
+            std::fs::create_dir_all(&path)?;
+        }
+
+        Ok(path)
+    }
+
+    fn open_or_create_db(data_dir: &PathBuf, db_filename: &str) -> rusqlite::Result<Connection> {
+        let db_path = data_dir.join(db_filename);
+
+        let conn: Connection = Connection::open(&db_path)?;
+        conn.execute("PRAGMA foreign_keys = ON;", [])?;
+        conn.execute_batch(TABLES)?;
+        Ok(conn)
+    }
+
+    pub fn data_dir(&self) -> &PathBuf {
+        &self.data_dir
+    }
+    pub fn connection(&self) -> &Connection {
+        &self.conn
+    }
+    pub fn path(&self) -> &PathBuf {
+        &self.tagfs_dir
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::env;
     use std::fs;
+    use std::path::PathBuf;
+    use tempfile::tempdir;
 
     #[test]
-    fn test_ensure_hidden_dir_idempotent() {
-        let test_dir_name = ".tagfs";
+    fn test_find_repo_root_finds_parent_with_tagfs() {
+        let tmp = tempdir().unwrap();
+        let parent = tmp.path().join("parent");
+        fs::create_dir_all(&parent).unwrap();
+        let child = parent.join("child");
+        fs::create_dir_all(&child).unwrap();
+        // create .tagfs in parent
+        let tagfs = parent.join(DATA_DIR_NAME);
+        fs::create_dir_all(&tagfs).unwrap();
 
-        let _ = fs::remove_dir_all(test_dir_name);
+        let found = Repo::find_repo_root(Some(child.as_path())).unwrap();
+        assert_eq!(found, parent);
+    }
 
-        let path1 = data_dir(test_dir_name).unwrap();
-        assert!(path1.exists());
+    #[test]
+    fn test_find_repo_root_not_found() {
+        let tmp = tempdir().unwrap();
+        // no .tagfs created
+        let res = Repo::find_repo_root(Some(tmp.path()));
+        assert!(res.is_err());
+    }
 
-        let path2 = data_dir(test_dir_name).unwrap();
-        assert_eq!(path1, path2);
+    #[test]
+    fn test_data_dir_init_creates_dir() {
+        let tmp = tempdir().unwrap();
+        let repo_path = tmp.path().join("repo");
+        fs::create_dir_all(&repo_path).unwrap();
+        let repo_pb = repo_path.clone();
+        let data_dir = Repo::data_dir_init(Some(&repo_pb)).unwrap();
+        assert!(data_dir.ends_with(DATA_DIR_NAME));
+        assert!(data_dir.is_dir());
+    }
 
-        fs::remove_dir_all(test_dir_name).unwrap();
+    #[test]
+    fn test_open_or_create_db_creates_db_and_table() {
+        let tmp = tempdir().unwrap();
+        let data_dir = tmp.path().join("data");
+        fs::create_dir_all(&data_dir).unwrap();
+
+        let conn = Repo::open_or_create_db(&data_dir, DB_FILENAME).unwrap();
+
+        let db_path = data_dir.join(DB_FILENAME);
+        assert!(db_path.exists());
+
+        let mut stmt = conn
+            .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='tracked_files';")
+            .unwrap();
+        let mut rows = stmt.query([]).unwrap();
+        let found = rows.next().unwrap();
+        assert!(found.is_some());
+    }
+
+    #[test]
+    fn test_new_creates_data_dir_and_db_when_absent() {
+        let tmp = tempdir().unwrap();
+        let original_cwd = env::current_dir().unwrap();
+        env::set_current_dir(tmp.path()).unwrap();
+
+        // Ensure no .tagfs initially
+        let tagfs_path = tmp.path().join(DATA_DIR_NAME);
+        if tagfs_path.exists() {
+            fs::remove_dir_all(&tagfs_path).unwrap();
+        }
+
+        let repo = Repo::new().unwrap();
+
+        // Repo.path() should be the tmp dir (current dir)
+        assert_eq!(repo.path(), &PathBuf::from(tmp.path()));
+
+        // data_dir should exist and be inside tmp
+        assert!(repo.data_dir().is_dir());
+        assert_eq!(repo.data_dir(), &tagfs_path);
+
+        // DB file should exist
+        let db_path = repo.data_dir().join(DB_FILENAME);
+        assert!(db_path.exists());
+
+        // restore cwd
+        env::set_current_dir(original_cwd).unwrap();
     }
 }
