@@ -1,9 +1,10 @@
+mod file;
 mod tag;
 
 use crate::error::RepoError;
 use rusqlite::Connection;
-use std::io;
 use std::path::{Path, PathBuf};
+use std::{io, path};
 
 pub const DATA_DIR_NAME: &str = ".tagfs";
 const DB_FILENAME: &str = "tagfs.db";
@@ -27,7 +28,7 @@ const TABLES: &str = "
         FOREIGN KEY (tag_id) REFERENCES tags(tag_id) ON DELETE CASCADE
 );
     ";
-
+#[derive(Debug)]
 pub struct Repo {
     tagfs_dir: PathBuf,
     data_dir: PathBuf,
@@ -97,14 +98,54 @@ impl Repo {
         Ok(conn)
     }
     //tags - quick
-    pub fn new_tag(&mut self, tag_name: &str) -> rusqlite::Result<i64> {
+    pub fn new_tag(&mut self, tag_name: &str) -> rusqlite::Result<()> {
         crate::repo::tag::new_tag(&mut self.conn, tag_name)
     }
-    pub fn update_tag(&mut self, new_name: &str, tag_name: &str) -> rusqlite::Result<Option<i64>> {
+    pub fn update_tag(&mut self, new_name: &str, tag_name: &str) -> rusqlite::Result<Option<()>> {
         crate::repo::tag::update_tag(&mut self.conn, new_name, tag_name)
     }
+    pub fn delete_tag(&mut self, tag_name: &str) -> rusqlite::Result<usize> {
+        crate::repo::tag::delete_tag(&mut self.conn, tag_name)
+    }
 
-    //accessors
+    //files - quick
+    pub fn new_tracked_file(
+        &mut self,
+        identifier: &crate::repo::file::TrackedFileUid,
+        path: &str,
+        tag_names: &[&str],
+    ) -> rusqlite::Result<()> {
+        crate::repo::file::new_tracked_file(&mut self.conn, identifier, path, tag_names)
+    }
+    pub fn add_tag_to_Tracked_file(
+        &mut self,
+        identifier: &crate::repo::file::TrackedFileUid,
+        tag_names: &[&str],
+    ) -> rusqlite::Result<()> {
+        crate::repo::file::add_tags_to_tracked_file(&mut self.conn, identifier, tag_names)
+    }
+    pub fn update_tracked_file_path(
+        &mut self,
+        identifier: &crate::repo::file::TrackedFileUid,
+        new_path: &str,
+    ) -> rusqlite::Result<Option<()>> {
+        crate::repo::file::update_tracked_file_path(&mut self.conn, identifier, new_path)
+    }
+    pub fn delete_tracked_file(
+        &mut self,
+        identifier: &crate::repo::file::TrackedFileUid,
+    ) -> rusqlite::Result<()> {
+        crate::repo::file::delete_tracked_file(&mut self.conn, identifier)
+    }
+    pub fn delete_tag_from_tracked_file(
+        &mut self,
+        identifier: &crate::repo::file::TrackedFileUid,
+        tag_names: &[&str],
+    ) -> rusqlite::Result<()> {
+        crate::repo::file::delete_tags_from_tracked_file(&mut self.conn, identifier, tag_names)
+    }
+
+    //getters
     pub fn data_dir(&self) -> &PathBuf {
         &self.data_dir
     }
