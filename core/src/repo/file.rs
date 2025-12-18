@@ -1,4 +1,7 @@
 use rusqlite::{Connection, Result as SqlResult, params};
+use serde_json::json;
+
+use crate::repo::tag;
 
 #[derive(Debug)]
 pub struct TrackedFileUid {
@@ -7,7 +10,7 @@ pub struct TrackedFileUid {
 }
 
 impl TrackedFileUid {
-    pub fn new(file_id: &str, create_ts: i64) -> Self {
+    pub fn new(file_id: String, create_ts: i64) -> Self {
         Self {
             file_id: file_id.to_string(),
             create_ts,
@@ -22,6 +25,19 @@ impl TrackedFileUid {
     }
 }
 
+pub struct TrackedFile {
+    pub identifier: TrackedFileUid,
+    pub path: String,
+}
+
+impl TrackedFile {
+    pub fn new(identifier: TrackedFileUid, path: &str) -> Self {
+        Self {
+            identifier,
+            path: path.to_string(),
+        }
+    }
+}
 /// Creates a new tracked file with associated tags, tags are created if they don't already exist.
 pub(super) fn new_tracked_file(
     conn: &mut Connection,
@@ -86,6 +102,42 @@ pub(super) fn add_tags_to_tracked_file(
     }
 
     tx.commit()
+}
+
+pub(super) fn get_tracked_files_by_tags(
+    conn: &mut Connection,
+    tag_names: &[&str],
+) -> SqlResult<Vec<TrackedFile>> {
+    let tag_json_array = json!(tag_names).to_string();
+    let tx = conn.transaction()?;
+
+    let result = {
+        let mut stmt = tx.prepare(
+            "
+            SELECT 
+                tf.file_id,
+                tf.createTs,
+                tf.path
+            FROM tracked_files tf
+            JOIN file_tags ft ON tf.file_id = ft.file_id AND tf.createTs = ft.createTs
+            JOIN tags t ON ft.tag_id = t.tag_id
+            WHERE t.name IN (SELECT value FROM json_each(?1))",
+        )?;
+
+        let rows = stmt.query_map(params![tag_json_array], |row| {
+            let file_id: String = row.get(0)?;
+            let create_ts: i64 = row.get(1)?;
+            let path: String = row.get(2)?;
+            Ok(TrackedFile::new(
+                TrackedFileUid::new(file_id, create_ts),
+                &path,
+            ))
+        })?;
+
+        rows.collect::<SqlResult<Vec<TrackedFile>>>()?
+    };
+    tx.commit()?;
+    Ok(result)
 }
 
 pub(super) fn update_tracked_file_path(

@@ -128,6 +128,12 @@ impl Repo {
     ) -> rusqlite::Result<()> {
         crate::repo::file::add_tags_to_tracked_file(&mut self.conn, identifier, tag_names)
     }
+    pub fn get_tracked_files_by_tags(
+        &mut self,
+        tag_names: &[&str],
+    ) -> rusqlite::Result<Vec<crate::repo::file::TrackedFile>> {
+        crate::repo::file::get_tracked_files_by_tags(&mut self.conn, tag_names)
+    }
     pub fn update_tracked_file_path(
         &mut self,
         identifier: &crate::repo::file::TrackedFileUid,
