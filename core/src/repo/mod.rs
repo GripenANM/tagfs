@@ -28,6 +28,10 @@ const TABLES: &str = "
         FOREIGN KEY (tag_id) REFERENCES tags(tag_id) ON DELETE CASCADE
 );
     ";
+//TODO: Add schema version check and migration system later
+//Basic Concept : Check Database Schema Hash, if mismatch run migration scripts in order to update to latest schema
+//store current hash and corresponded migration SQL in a dedicated table compiled during compile time using build.rs
+//approach similar to rusqlite_migration crate but use schema hashes instead of version numbers
 #[derive(Debug)]
 pub struct Repo {
     tagfs_dir: PathBuf,
