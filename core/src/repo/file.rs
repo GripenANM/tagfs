@@ -1,7 +1,10 @@
+use std::{fs::File, hash::Hash, path::PathBuf};
+
+use file_id::{self, FileId};
 use rusqlite::{Connection, Result as SqlResult, params};
 use serde_json::json;
 
-use crate::repo::tag;
+use crate::repo::file;
 
 #[derive(Debug)]
 pub struct TrackedFileUid {
@@ -190,4 +193,48 @@ pub(super) fn delete_tags_from_tracked_file(
     }
 
     tx.commit()
+}
+
+fn generate_file_identifier(file_id: FileId) -> String {
+    match file_id {
+        FileId::Inode {
+            device_id,
+            inode_number,
+        } => {
+            format!("LR-{}-{}", device_id, inode_number)
+        }
+        FileId::HighRes {
+            volume_serial_number,
+            file_id,
+        } => {
+            format!("HR-{}-{}", volume_serial_number, file_id)
+        }
+        FileId::LowRes {
+            volume_serial_number,
+            file_index,
+        } => {
+            format!("LR-{}-{}", volume_serial_number, file_index)
+        }
+    }
+}
+
+pub(super) fn sync_by_tag(conn: &mut Connection, tags: &[&str]) -> SqlResult<()> {
+    let tracked_files = get_tracked_files_by_tags(conn, tags)?;
+    let missing_files: Vec<&TrackedFile> = tracked_files
+        .iter()
+        .filter(|file| {
+            let path = PathBuf::from(&file.path);
+
+            !path.exists()
+                || file_id::get_file_id(&file.path)
+                    .map(|id| generate_file_identifier(id) != file.identifier.file_id())
+                    .unwrap_or(true)
+        })
+        .collect();
+    for file in missing_files {
+        //TODO: continue implementation to handle missing or changed files for resync
+        //Iterate the whole folder and map the new path for files with the same file_id
+        println!("File missing or changed: {}", file.path);
+    }
+    Ok(())
 }
